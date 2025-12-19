@@ -1,0 +1,17 @@
+{
+  "name": "fortnite-ai-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "body-parser": "^2.2.1",
+    "discord.js": "^14.0.0",
+    "dotenv": "^17.0.0",
+    "express": "^5.2.1",
+    "openai": "^4.0.0",
+    "stripe": "^20.1.0"
+  }
+}
