@@ -4,7 +4,6 @@ process.on('uncaughtException', (error) => console.error('UNCAUGHT:', error));
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const OpenAI = require('openai');
-
 const express = require('express');
 const bodyParser = require('body-parser');
 const Stripe = require('stripe');
@@ -15,17 +14,15 @@ console.log('ENV CHECK:', {
   OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
   STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET: !!process.env.STRIPE_WEBHOOK_SECRET,
+  GUILD_ID: !!process.env.GUILD_ID,
   PRO_ROLE_ID: !!process.env.PRO_ROLE_ID,
   ELITE_ROLE_ID: !!process.env.ELITE_ROLE_ID,
-  GUILD_ID: !!process.env.GUILD_ID,
   STRIPE_PRO_PRICE_ID: !!process.env.STRIPE_PRO_PRICE_ID,
   STRIPE_ELITE_PRICE_ID: !!process.env.STRIPE_ELITE_PRICE_ID,
 });
 
 // ===== Discord client =====
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // ===== OpenAI client =====
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -46,26 +43,21 @@ function splitMessage(text, maxLength = 2000) {
   return chunks;
 }
 
-// ===== Express webhook server (Render requires PORT) =====
+// ===== Express server (Render requires PORT) =====
 const app = express();
 
-// Health check
 app.get('/', (req, res) => res.status(200).send('Artx bot is running ✅'));
 
-// Stripe webhook (RAW body needed)
+// Stripe webhook needs RAW body
 app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error('❌ Stripe signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    return res.status(400).send('Webhook Error');
   }
 
   try {
@@ -79,7 +71,7 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, r
       const proRoleId = process.env.PRO_ROLE_ID;
       const eliteRoleId = process.env.ELITE_ROLE_ID;
 
-      console.log('✅ Checkout completed:', {
+      console.log('✅ checkout.session.completed:', {
         email: session.customer_details?.email,
         discordUserId,
         plan,
@@ -105,7 +97,6 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, r
   }
 });
 
-// Render provides PORT
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
 
@@ -122,70 +113,63 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // /daily
     if (interaction.commandName === 'daily') {
       const tips = [
-        "Always build before you shoot for cover.",
-        "Take high ground before engaging.",
-        "Rotate early to avoid storm pressure.",
-        "Carry at least two healing items.",
-        "Edit builds to control fights."
+        'Always build before you shoot for cover.',
+        'Take high ground before engaging.',
+        'Rotate early to avoid storm pressure.',
+        'Carry at least two healing items.',
+        'Edit builds to control fights.',
       ];
       const randomTip = tips[Math.floor(Math.random() * tips.length)];
-      return interaction.reply("💡 Daily Tip: " + randomTip);
+      return interaction.reply(`💡 Daily Tip: ${randomTip}`);
     }
 
     // /coach
     if (interaction.commandName === 'coach') {
-      const question = interaction.options.getString('question');
-      const clip = interaction.options.getAttachment('clip');
-
       await interaction.deferReply();
 
+      const question = interaction.options.getString('question');
+      const clip = interaction.options.getAttachment('clip');
       const clipText = clip ? `\nAnalyze this Fortnite clip: ${clip.url}` : '';
 
       const response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: 'You are a Fortnite pro coach. Give practical, concise advice.' },
-          { role: 'user', content: question + clipText }
-        ]
+          { role: 'user', content: question + clipText },
+        ],
       });
 
       const aiText = response.choices[0].message.content || '';
-      for (const chunk of splitMessage(aiText)) {
-        await interaction.followUp(chunk);
-      }
+      for (const chunk of splitMessage(aiText)) await interaction.followUp(chunk);
       return;
     }
 
-    // /review (ELITE-only)
+    // /review (Elite-only)
     if (interaction.commandName === 'review') {
       const eliteRoleId = process.env.ELITE_ROLE_ID;
 
-      if (!interaction.member.roles.cache.has(eliteRoleId)) {
+      if (!interaction.member?.roles?.cache?.has(eliteRoleId)) {
         return interaction.reply({
-          content: '🔒 This command is for **ELITE users only**.\nUse `/upgrade_elite` to unlock VOD reviews.',
-          ephemeral: true
+          content: '🔒 **Elite only.** Use `/upgrade_elite` to unlock VOD reviews.',
+          ephemeral: true,
         });
       }
 
-      const vod = interaction.options.getAttachment('vod'); // must match deploy-commands.js
-      if (!vod) {
-        return interaction.reply({ content: '❗ Please upload a VOD.', ephemeral: true });
-      }
-
       await interaction.deferReply();
+
+      const vod = interaction.options.getAttachment('vod');
+      if (!vod) return interaction.followUp('❗ Please upload a VOD/clip.');
 
       const response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: 'You are a professional Fortnite VOD reviewer. Give clear, actionable improvement tips.' },
-          { role: 'user', content: `Review this Fortnite clip and give improvement advice:\n${vod.url}` }
-        ]
+          { role: 'user', content: `Review this Fortnite clip and give improvement advice:\n${vod.url}` },
+        ],
       });
 
       const aiText = response.choices[0].message.content || '';
-      for (const chunk of splitMessage(aiText)) {
-        await interaction.followUp(chunk);
-      }
+      for (const chunk of splitMessage(aiText)) await interaction.followUp(chunk);
       return;
     }
 
@@ -198,7 +182,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         line_items: [{ price: process.env.STRIPE_PRO_PRICE_ID, quantity: 1 }],
         success_url: 'https://discord.com/channels/@me',
         cancel_url: 'https://discord.com/channels/@me',
-        metadata: { discord_user_id: interaction.user.id, plan: 'pro' }
+        metadata: { discord_user_id: interaction.user.id, plan: 'pro' },
       });
 
       return interaction.followUp(`💳 **Upgrade to Artx PRO**\n${session.url}`);
@@ -213,18 +197,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         line_items: [{ price: process.env.STRIPE_ELITE_PRICE_ID, quantity: 1 }],
         success_url: 'https://discord.com/channels/@me',
         cancel_url: 'https://discord.com/channels/@me',
-        metadata: { discord_user_id: interaction.user.id, plan: 'elite' }
+        metadata: { discord_user_id: interaction.user.id, plan: 'elite' },
       });
 
       return interaction.followUp(`💳 **Upgrade to Artx ELITE**\n${session.url}`);
     }
-
   } catch (err) {
     console.error('INTERACTION ERROR:', err);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.followUp('⚠️ Something went wrong.');
-    } else {
-      await interaction.reply('⚠️ Something went wrong.');
+
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp('⚠️ Something went wrong.');
+      } else {
+        await interaction.reply({ content: '⚠️ Something went wrong.', ephemeral: true });
+      }
+    } catch (e) {
+      console.error('FAILED TO SEND ERROR MESSAGE:', e);
     }
   }
 });
