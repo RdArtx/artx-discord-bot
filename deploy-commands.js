@@ -2,12 +2,10 @@ require('dotenv').config();
 const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 
 const commands = [
-  // ===== /daily =====
   new SlashCommandBuilder()
     .setName('daily')
     .setDescription('Get a random Fortnite tip'),
 
-  // ===== /coach =====
   new SlashCommandBuilder()
     .setName('coach')
     .setDescription('Ask Artx a Fortnite question')
@@ -24,34 +22,33 @@ const commands = [
         .setRequired(false)
     ),
 
-  // ===== /review (Premium) =====
   new SlashCommandBuilder()
     .setName('review')
-    .setDescription('Get a premium Fortnite VOD review')
+    .setDescription('Get a full Fortnite VOD review (Elite only)')
     .addAttachmentOption(option =>
       option
-        .setName('clip')
-        .setDescription('Upload your Fortnite VOD')
+        .setName('vod')
+        .setDescription('Upload your Fortnite VOD/clip')
         .setRequired(true)
     ),
 
-  // ===== /upgrade =====
   new SlashCommandBuilder()
-    .setName('upgrade')
-    .setDescription('Upgrade to Artx Premium and unlock VOD reviews')
-].map(command => command.toJSON());
+    .setName('upgrade_pro')
+    .setDescription('Upgrade to Artx Pro ($7.99/mo)'),
+
+  new SlashCommandBuilder()
+    .setName('upgrade_elite')
+    .setDescription('Upgrade to Artx Elite ($19.99/mo)'),
+].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
-    console.log('🔄 Deploying slash commands...');
-    await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: commands }
-    );
-    console.log('✅ Slash commands deployed successfully.');
+    console.log('Started refreshing application (slash) commands...');
+    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+    console.log('Successfully reloaded application (slash) commands.');
   } catch (error) {
-    console.error('❌ Error deploying commands:', error);
+    console.error(error);
   }
 })();

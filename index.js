@@ -69,28 +69,35 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, r
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
 
-      // We rely on metadata.discord_user_id set when creating the checkout session
       const discordUserId = session?.metadata?.discord_user_id;
-      const guildId = process.env.GUILD_ID;
-      const premiumRoleId = process.env.PREMIUM_ROLE_ID;
+  const plan = session?.metadata?.plan; // "pro" or "elite"
 
-      console.log('✅ checkout.session.completed:', {
-        email: session.customer_details?.email,
-        discordUserId,
-      });
+  const guildId = process.env.GUILD_ID;
+  const proRoleId = process.env.PRO_ROLE_ID;
+  const eliteRoleId = process.env.ELITE_ROLE_ID;
 
-      if (!discordUserId) {
-        console.warn('⚠️ No discord_user_id in session.metadata. Cannot assign role.');
-      } else if (!guildId || !premiumRoleId) {
-        console.warn('⚠️ Missing GUILD_ID or PREMIUM_ROLE_ID env vars.');
-      } else {
-        const guild = await client.guilds.fetch(guildId);
-        const member = await guild.members.fetch(discordUserId);
+  console.log('✅ Checkout completed:', {
+    email: session.customer_details?.email,
+    discordUserId,
+    plan,
+  });
 
-        await member.roles.add(premiumRoleId);
-        console.log(`🎉 Premium role added to user ${discordUserId}`);
-      }
+  if (!discordUserId || !plan) {
+    console.warn('⚠️ Missing discord_user_id or plan in metadata.');
+  } else {
+    try {
+      const guild = await client.guilds.fetch(guildId);
+      const member = await guild.members.fetch(discordUserId);
+
+      const roleToAdd = plan === 'elite' ? eliteRoleId : proRoleId;
+      await member.roles.add(roleToAdd);
+
+      console.log(`🎉 Added ${plan.toUpperCase()} role to ${discordUserId}`);
+    } catch (err) {
+      console.error('❌ Failed to assign role:', err);
     }
+  }
+}
 
     res.json({ received: true });
   } catch (err) {
@@ -163,7 +170,7 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      const vod = interaction.options.getAttachment('clip'); // matches deploy-commands.js
+      const vod = interaction.options.getAttachment('vod'); // matches deploy-commands.js
       if (!vod) {
         return interaction.reply({ content: '❗ Please upload a clip.', ephemeral: true });
       }
