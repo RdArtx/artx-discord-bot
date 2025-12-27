@@ -1,5 +1,5 @@
-process.on('unhandledRejection', error => console.error('UNHANDLED:', error));
-process.on('uncaughtException', error => console.error('UNCAUGHT:', error));
+process.on('unhandledRejection', (error) => console.error('UNHANDLED:', error));
+process.on('uncaughtException', (error) => console.error('UNCAUGHT:', error));
 
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events } = require('discord.js');
@@ -15,8 +15,11 @@ console.log('ENV CHECK:', {
   OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
   STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET: !!process.env.STRIPE_WEBHOOK_SECRET,
-  PREMIUM_ROLE_ID: !!process.env.PREMIUM_ROLE_ID,
+  PRO_ROLE_ID: !!process.env.PRO_ROLE_ID,
+  ELITE_ROLE_ID: !!process.env.ELITE_ROLE_ID,
   GUILD_ID: !!process.env.GUILD_ID,
+  STRIPE_PRO_PRICE_ID: !!process.env.STRIPE_PRO_PRICE_ID,
+  STRIPE_ELITE_PRICE_ID: !!process.env.STRIPE_ELITE_PRICE_ID,
 });
 
 // ===== Discord client =====
@@ -46,10 +49,10 @@ function splitMessage(text, maxLength = 2000) {
 // ===== Express webhook server (Render requires PORT) =====
 const app = express();
 
-// Health check so you can open the URL in a browser
+// Health check
 app.get('/', (req, res) => res.status(200).send('Artx bot is running ✅'));
 
-// Stripe requires RAW body for signature verification
+// Stripe webhook (RAW body needed)
 app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -70,47 +73,41 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), async (req, r
       const session = event.data.object;
 
       const discordUserId = session?.metadata?.discord_user_id;
-  const plan = session?.metadata?.plan; // "pro" or "elite"
+      const plan = session?.metadata?.plan; // "pro" or "elite"
 
-  const guildId = process.env.GUILD_ID;
-  const proRoleId = process.env.PRO_ROLE_ID;
-  const eliteRoleId = process.env.ELITE_ROLE_ID;
+      const guildId = process.env.GUILD_ID;
+      const proRoleId = process.env.PRO_ROLE_ID;
+      const eliteRoleId = process.env.ELITE_ROLE_ID;
 
-  console.log('✅ Checkout completed:', {
-    email: session.customer_details?.email,
-    discordUserId,
-    plan,
-  });
+      console.log('✅ Checkout completed:', {
+        email: session.customer_details?.email,
+        discordUserId,
+        plan,
+      });
 
-  if (!discordUserId || !plan) {
-    console.warn('⚠️ Missing discord_user_id or plan in metadata.');
-  } else {
-    try {
-      const guild = await client.guilds.fetch(guildId);
-      const member = await guild.members.fetch(discordUserId);
+      if (!discordUserId || !plan) {
+        console.warn('⚠️ Missing discord_user_id or plan in metadata.');
+      } else {
+        const guild = await client.guilds.fetch(guildId);
+        const member = await guild.members.fetch(discordUserId);
 
-      const roleToAdd = plan === 'elite' ? eliteRoleId : proRoleId;
-      await member.roles.add(roleToAdd);
+        const roleToAdd = plan === 'elite' ? eliteRoleId : proRoleId;
+        await member.roles.add(roleToAdd);
 
-      console.log(`🎉 Added ${plan.toUpperCase()} role to ${discordUserId}`);
-    } catch (err) {
-      console.error('❌ Failed to assign role:', err);
+        console.log(`🎉 Added ${plan.toUpperCase()} role to ${discordUserId}`);
+      }
     }
-  }
-}
 
-    res.json({ received: true });
+    return res.json({ received: true });
   } catch (err) {
     console.error('❌ Webhook handler error:', err);
-    res.status(500).send('Server error');
+    return res.status(500).send('Server error');
   }
 });
 
 // Render provides PORT
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🌐 Web server listening on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🌐 Web server listening on port ${PORT}`));
 
 // ===== Discord ready =====
 client.once('ready', () => {
@@ -118,7 +115,7 @@ client.once('ready', () => {
 });
 
 // ===== Slash commands =====
-client.on(Events.InteractionCreate, async interaction => {
+client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
 
@@ -152,27 +149,27 @@ client.on(Events.InteractionCreate, async interaction => {
         ]
       });
 
-      const aiText = response.choices[0].message.content;
+      const aiText = response.choices[0].message.content || '';
       for (const chunk of splitMessage(aiText)) {
         await interaction.followUp(chunk);
       }
       return;
     }
 
-    // /review (Premium-only)
+    // /review (ELITE-only)
     if (interaction.commandName === 'review') {
-      const premiumRoleId = process.env.PREMIUM_ROLE_ID;
+      const eliteRoleId = process.env.ELITE_ROLE_ID;
 
-      if (!interaction.member.roles.cache.has(premiumRoleId)) {
+      if (!interaction.member.roles.cache.has(eliteRoleId)) {
         return interaction.reply({
-          content: '🔒 This command is for **Premium users only**.\nUse `/upgrade` to unlock VOD reviews.',
+          content: '🔒 This command is for **ELITE users only**.\nUse `/upgrade_elite` to unlock VOD reviews.',
           ephemeral: true
         });
       }
 
-      const vod = interaction.options.getAttachment('vod'); // matches deploy-commands.js
+      const vod = interaction.options.getAttachment('vod'); // must match deploy-commands.js
       if (!vod) {
-        return interaction.reply({ content: '❗ Please upload a clip.', ephemeral: true });
+        return interaction.reply({ content: '❗ Please upload a VOD.', ephemeral: true });
       }
 
       await interaction.deferReply();
@@ -185,26 +182,41 @@ client.on(Events.InteractionCreate, async interaction => {
         ]
       });
 
-      const aiText = response.choices[0].message.content;
+      const aiText = response.choices[0].message.content || '';
       for (const chunk of splitMessage(aiText)) {
         await interaction.followUp(chunk);
       }
       return;
     }
 
-    // /upgrade (creates Stripe checkout session)
-    if (interaction.commandName === 'upgrade') {
+    // /upgrade_pro
+    if (interaction.commandName === 'upgrade_pro') {
       await interaction.deferReply({ ephemeral: true });
 
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
-        line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+        line_items: [{ price: process.env.STRIPE_PRO_PRICE_ID, quantity: 1 }],
         success_url: 'https://discord.com/channels/@me',
         cancel_url: 'https://discord.com/channels/@me',
-        metadata: { discord_user_id: interaction.user.id }
+        metadata: { discord_user_id: interaction.user.id, plan: 'pro' }
       });
 
-      return interaction.followUp(`💳 **Upgrade to Artx Premium**\n${session.url}`);
+      return interaction.followUp(`💳 **Upgrade to Artx PRO**\n${session.url}`);
+    }
+
+    // /upgrade_elite
+    if (interaction.commandName === 'upgrade_elite') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        line_items: [{ price: process.env.STRIPE_ELITE_PRICE_ID, quantity: 1 }],
+        success_url: 'https://discord.com/channels/@me',
+        cancel_url: 'https://discord.com/channels/@me',
+        metadata: { discord_user_id: interaction.user.id, plan: 'elite' }
+      });
+
+      return interaction.followUp(`💳 **Upgrade to Artx ELITE**\n${session.url}`);
     }
 
   } catch (err) {
